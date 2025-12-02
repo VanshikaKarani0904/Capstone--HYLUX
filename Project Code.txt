@@ -1,0 +1,93 @@
+from machine import Pin, PWM
+import time
+
+#Pins
+PIN_PIR = 0            
+PIN_PWM = 2            
+PIN_LDR = 3            
+
+pir = Pin(PIN_PIR, Pin.IN, Pin.PULL_DOWN)
+pwm_led = PWM(Pin(PIN_PWM))
+pwm_led.freq(1000)
+ldr = Pin(PIN_LDR, Pin.IN)
+
+
+LDR_DO_DAY_STATE = 0   
+
+def is_daytime():
+    return (ldr.value() == LDR_DO_DAY_STATE)
+
+def set_brightness(pct):
+    pct = max(0.0, min(1.0, pct))
+    pwm_led.duty_u16(int(pct * 65535))
+
+#Behavior
+BRIGHT_IDLE   = 0.20         
+LED_ON_TIME   = 10_000       
+COOLDOWN_TIME = 20_000       
+WARMUP_TIME   = 20           
+FILTER_MS     = 100          
+
+print("Warming up PIR ({}s)...".format(WARMUP_TIME))
+time.sleep(WARMUP_TIME)
+print("Ready!")
+
+#State
+set_brightness(0.0)                    
+last_trigger = time.ticks_ms() - COOLDOWN_TIME  
+in_full = False
+full_end = 0
+high_since = None
+prev_day = None  
+
+while True:
+    now = time.ticks_ms()
+    day = is_daytime()
+
+    #Handle day/night transition cleanly
+    if day != prev_day:
+        prev_day = day
+        if day:
+            
+            set_brightness(0.0)
+            in_full = False
+            high_since = None
+            last_trigger = now  
+        else:
+            
+            set_brightness(BRIGHT_IDLE)
+            in_full = False
+            high_since = None
+            last_trigger = now - COOLDOWN_TIME - 1  
+
+    if day:
+        # Day: keep OFF and ignore PIR
+        time.sleep_ms(50)
+        continue
+
+    #Night behavior
+    if in_full:
+        
+        if time.ticks_diff(now, full_end) >= 0:
+            in_full = False
+            set_brightness(BRIGHT_IDLE)
+            last_trigger = now  
+    else:
+        
+        if time.ticks_diff(now, last_trigger) > COOLDOWN_TIME:
+            if pir.value():
+                if high_since is None:
+                    high_since = now
+                elif time.ticks_diff(now, high_since) >= FILTER_MS:
+                    
+                    in_full = True
+                    set_brightness(1.0)
+                    full_end = time.ticks_add(now, LED_ON_TIME)
+            else:
+                high_since = None
+        else:
+            
+            set_brightness(BRIGHT_IDLE)
+
+    time.sleep_ms(20)
+
